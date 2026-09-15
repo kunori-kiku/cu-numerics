@@ -1,0 +1,56 @@
+name: Test published image SSH
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  ssh:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - name: Make room and pull the exact published image
+        run: |
+          sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet
+          docker pull ghcr.io/kunori-kiku/cu-numerics@sha256:0ce720e58149ee45938b517df406dbb0ba5486575cc5e7c8a8a2e98cd2dcec2c
+      - name: Start the normal image with RSA and Ed25519 public keys
+        run: |
+          ssh-keygen -q -t rsa -b 4096 -N '' -f "$RUNNER_TEMP/test_rsa"
+          ssh-keygen -q -t ed25519 -N '' -f "$RUNNER_TEMP/test_ed25519"
+          docker run -d --name ssh-check -p 127.0.0.1::22 \
+            -e PUBLIC_KEY="$(cat "$RUNNER_TEMP/test_rsa.pub")" \
+            -e EXTRA_PUBLIC_KEY="$(cat "$RUNNER_TEMP/test_ed25519.pub")" \
+            ghcr.io/kunori-kiku/cu-numerics@sha256:0ce720e58149ee45938b517df406dbb0ba5486575cc5e7c8a8a2e98cd2dcec2c \
+            bash -c 'export PUBLIC_KEY="$(printf "%s\n%s" "$PUBLIC_KEY" "$EXTRA_PUBLIC_KEY")"; exec /start.sh'
+      - name: Verify real SSH login and SCP through the forwarded port
+        run: |
+          port="$(docker port ssh-check 22/tcp | cut -d: -f2)"
+          printf 'Mapped SSH port: %s\n' "$port"
+          ready=0
+          for attempt in $(seq 1 60); do
+            if ssh -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new \
+                -o UserKnownHostsFile="$RUNNER_TEMP/test_hosts" -o ConnectTimeout=2 \
+                -i "$RUNNER_TEMP/test_ed25519" -p "$port" root@127.0.0.1 'echo SSH_ED25519_OK'; then
+              ready=1
+              break
+            fi
+            sleep 2
+          done
+          test "$ready" -eq 1
+          ssh -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new \
+            -o UserKnownHostsFile="$RUNNER_TEMP/test_hosts" -i "$RUNNER_TEMP/test_rsa" \
+            -p "$port" root@127.0.0.1 'echo SSH_RSA4096_OK'
+          printf 'file-transfer-check\n' > "$RUNNER_TEMP/scp-probe.txt"
+          scp -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new \
+            -o UserKnownHostsFile="$RUNNER_TEMP/test_hosts" -i "$RUNNER_TEMP/test_ed25519" \
+            -P "$port" "$RUNNER_TEMP/scp-probe.txt" root@127.0.0.1:/tmp/scp-probe.txt
+          ssh -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new \
+            -o UserKnownHostsFile="$RUNNER_TEMP/test_hosts" -i "$RUNNER_TEMP/test_ed25519" \
+            -p "$port" root@127.0.0.1 'test "$(cat /tmp/scp-probe.txt)" = file-transfer-check && echo SCP_OK'
+      - name: Startup diagnostics
+        if: always()
+        run: |
+          docker logs ssh-check || true
+          docker inspect ssh-check --format '{{json .State}}' || true
+      - name: Cleanup this test container
+        if: always()
+        run: docker rm -f ssh-check || true

@@ -10,7 +10,7 @@ RUN curl --fail --location --retry 3 \
       --output /tmp/miniforge.sh && \
     echo "${MINIFORGE_SHA256}  /tmp/miniforge.sh" | sha256sum --check --strict - && \
     bash /tmp/miniforge.sh -b -p /opt/conda && \
-    /opt/conda/bin/conda create --yes --prefix /opt/cu-numerics --file /tmp/cu-numerics-locks/conda-linux-64.lock && \
+    CONDA_OVERRIDE_CUDA=12.9 /opt/conda/bin/conda create --yes --prefix /opt/cu-numerics --file /tmp/cu-numerics-locks/conda-linux-64.lock && \
     /opt/cu-numerics/bin/python -m pip install --index-url https://pypi.org/simple \
       --no-cache-dir --only-binary=:all: --no-deps --require-hashes -r /tmp/cu-numerics-locks/requirements.lock && \
     /opt/conda/bin/conda clean --all --yes && rm /tmp/miniforge.sh
@@ -33,7 +33,7 @@ assert (prefix/'include/cudss.h').is_file()
 assert (prefix/'lib/libcudss.so.0').is_file()
 files={}
 for path in prefix.rglob('*'):
-    if path.is_file() and ('.so' in path.name or path.name in ('python3.11','nvcc','cmake','ninja','c++','cudss.h')):
+    if path.is_file() and ('.so' in path.name or path.suffix in ('.h','.hpp','.cuh') or path.name in ('python3.11','nvcc','cmake','ninja','c++','cudss.h')):
         with path.open('rb') as stream:files[str(path)]=hashlib.file_digest(stream,'sha256').hexdigest()
 record=dict(schema='cu_numerics_runtime_v1',prefix=str(prefix),cuda_family='12.9',
     cudss_library=str(prefix/'lib/libcudss.so.0'),files=files,

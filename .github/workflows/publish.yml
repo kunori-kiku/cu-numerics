@@ -10,7 +10,11 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Fetch public build recipe
-        run: git clone --depth 1 --branch main https://github.com/kunori-kiku/cu-numerics.git recipe
+        run: |
+          git init recipe
+          git -C recipe remote add origin https://github.com/kunori-kiku/cu-numerics.git
+          git -C recipe fetch --depth 1 origin "$GITHUB_SHA"
+          git -C recipe checkout --detach FETCH_HEAD
       - name: Make room on this disposable build runner
         run: |
           sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet

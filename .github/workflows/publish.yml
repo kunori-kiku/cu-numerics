@@ -1,0 +1,53 @@
+name: Build and publish cu-numerics
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+  packages: write
+jobs:
+  image:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - name: Fetch public build recipe
+        run: git clone --depth 1 --branch main https://github.com/kunori-kiku/cu-numerics.git recipe
+      - name: Make room on this disposable build runner
+        run: |
+          sudo rm -rf /usr/local/lib/android /opt/ghc /usr/share/dotnet
+          docker system prune -af
+          df -h /
+      - name: Stage only the four public text inputs
+        run: |
+          mkdir context
+          cp recipe/Dockerfile recipe/conda-linux-64.lock recipe/requirements.lock recipe/.dockerignore context/
+          test "$(find context -type f | wc -l)" -eq 4
+          test -z "$(find context -type l)"
+          sha256sum context/* context/.dockerignore
+      - name: Build pinned numerical dependencies
+        run: |
+          docker build --progress plain --tag ghcr.io/kunori-kiku/cu-numerics:cuda12.9 \
+            --label org.opencontainers.image.source=https://github.com/kunori-kiku/cu-numerics context
+      - name: Check runtime and inherited SSH
+        run: |
+          python3 - <<'PYTHON'
+          import json, subprocess
+          image='ghcr.io/kunori-kiku/cu-numerics:cuda12.9'
+          base='runpod/base:1.2.0-cuda1290-ubuntu2204'
+          configs=[json.loads(subprocess.check_output(['docker','image','inspect',name]))[0]['Config'] for name in (base,image)]
+          for key in ('Entrypoint','Cmd'):
+              assert configs[0][key]==configs[1][key], key
+          subprocess.run(['docker','run','--rm','--entrypoint','/usr/sbin/sshd',image,'-V'],check=True)
+          code="import ctypes,pathlib; p=pathlib.Path('/opt/cu-numerics'); ctypes.CDLL(str(p/'lib/libcudss.so.0')); assert (p/'runtime-manifest.json').is_file(); assert not pathlib.Path('/workspace/jax_fem').exists(); assert not pathlib.Path('/workspace/robot_env').exists(); assert not any(any(s in x.name for s in ('cudss_solver_ext','ipc_oracle_ext','ccd_oracle_ext','friction_ext')) for x in p.rglob('*.so')); print('third-party runtime checked; custom project extensions absent')"
+          subprocess.run(['docker','run','--rm','-e','JAX_PLATFORMS=cpu','--entrypoint','/opt/cu-numerics/bin/python',image,'-c',code],check=True)
+          PYTHON
+      - name: Publish verified image
+        env:
+          REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          printf '%s' "$REGISTRY_TOKEN" | docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          docker push ghcr.io/kunori-kiku/cu-numerics:cuda12.9
+          docker logout ghcr.io
+      - name: Confirm anonymous image access
+        run: |
+          mkdir "$RUNNER_TEMP/anonymous-docker"
+          DOCKER_CONFIG="$RUNNER_TEMP/anonymous-docker" docker manifest inspect ghcr.io/kunori-kiku/cu-numerics:cuda12.9

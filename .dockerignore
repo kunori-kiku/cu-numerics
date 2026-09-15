@@ -1,0 +1,4 @@
+*
+!Dockerfile
+!conda-linux-64.lock
+!requirements.lock

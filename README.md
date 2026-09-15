@@ -27,3 +27,49 @@ is copied into the image. Third-party packages retain their respective licenses.
 The workflow builds, checks dependency imports and the inherited SSH settings,
 then publishes `ghcr.io/kunori-kiku/cu-numerics:cuda12.9`. Publication is not an
 anonymous-access claim until the final unauthenticated registry check succeeds.
+
+## RunPod template and SSH
+
+The published image retains the NVIDIA entrypoint and RunPod's `/start.sh`.
+That startup script configures and starts SSH only when `PUBLIC_KEY` is nonempty.
+For a personal RunPod template, use these settings:
+
+| Field | Setting |
+| --- | --- |
+| Container image | `ghcr.io/kunori-kiku/cu-numerics:cuda12.9` |
+| Container Start Command | Leave blank to inherit `/start.sh` when `PUBLIC_KEY` is configured below. |
+| Environment variable `PUBLIC_KEY` | Complete authorized public keys, one key per line. |
+| Expose TCP Ports | `22` |
+| Instance networking | A public-IP-capable instance for direct SSH and file transfer. |
+
+The image's pinned digest is
+`sha256:0ce720e58149ee45938b517df406dbb0ba5486575cc5e7c8a8a2e98cd2dcec2c`.
+Use `ghcr.io/kunori-kiku/cu-numerics@sha256:0ce720e58149ee45938b517df406dbb0ba5486575cc5e7c8a8a2e98cd2dcec2c`
+to select those exact bytes.
+
+RunPod offers two separate connection routes. Register the connecting key under
+account **SSH Public Keys** for the `ssh.runpod.io` basic gateway. Its documented
+per-Pod override is `SSH_PUBLIC_KEY`; changing the image's `PUBLIC_KEY` alone does
+not register a gateway key. For direct SSH/SCP, use **SSH over exposed TCP** and
+its assigned external port: `ssh root@PUBLIC_IP -p EXTERNAL_PORT -i PRIVATE_KEY`.
+The external port is normally different from container port 22. The basic gateway
+does not support SCP/SFTP. See the [official SSH guide](https://docs.runpod.io/pods/configuration/use-ssh).
+
+Keep the inherited startup when customizing the command. The
+[template guide](https://docs.runpod.io/pods/templates/manage-templates) explains
+that the start-command field overrides the image's CMD. No SSH package
+installation at Pod startup is needed for this image.
+
+The image contains about 16.1 GB of compressed layers and expands to about
+31.1 GB. A cold pull can delay SSH readiness; inspect Pod initialization and
+container logs before treating an early connection refusal as authentication
+failure. Attach a **network volume** at creation for data that must survive Pod
+termination; an ordinary Pod volume disk does not meet that requirement.
+See [RunPod storage types](https://docs.runpod.io/pods/storage/types).
+
+The [2026-09-15 SSH smoke run](https://github.com/kunori-kiku/cu-numerics/actions/runs/34960034712)
+passed real RSA4096 and Ed25519 logins and an SCP transfer on the pinned image.
+It exercised the inherited entrypoint and `/start.sh`, with an override that
+combined two temporary public keys before invoking `/start.sh`, through a
+forwarded port on a GitHub CPU runner. It did not test RunPod's gateway, a saved
+RunPod template, provider networking/storage or GPU execution.

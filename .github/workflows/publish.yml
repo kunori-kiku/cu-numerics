@@ -29,6 +29,7 @@ jobs:
           sha256sum context/* context/.dockerignore
       - name: Build pinned numerical dependencies
         run: |
+          docker pull runpod/base:1.2.0-cuda1290-ubuntu2204
           docker build --progress plain --tag ghcr.io/kunori-kiku/cu-numerics:cuda12.9 \
             --label org.opencontainers.image.source=https://github.com/kunori-kiku/cu-numerics context
       - name: Check runtime and inherited SSH
@@ -40,10 +41,11 @@ jobs:
           configs=[json.loads(subprocess.check_output(['docker','image','inspect',name]))[0]['Config'] for name in (base,image)]
           for key in ('Entrypoint','Cmd'):
               assert configs[0][key]==configs[1][key], key
-          subprocess.run(['docker','run','--rm','--entrypoint','/usr/sbin/sshd',image,'-V'],check=True)
+          subprocess.run(['docker','run','--rm','--entrypoint','/bin/bash',image,'-c','mkdir -p /run/sshd; ssh-keygen -A; /usr/sbin/sshd -t'],check=True)
           code="import ctypes,pathlib; p=pathlib.Path('/opt/cu-numerics'); ctypes.CDLL(str(p/'lib/libcudss.so.0')); assert (p/'runtime-manifest.json').is_file(); assert not pathlib.Path('/workspace/jax_fem').exists(); assert not pathlib.Path('/workspace/robot_env').exists(); assert not any(any(s in x.name for s in ('cudss_solver_ext','ipc_oracle_ext','ccd_oracle_ext','friction_ext')) for x in p.rglob('*.so')); print('third-party runtime checked; custom project extensions absent')"
-          subprocess.run(['docker','run','--rm','-e','JAX_PLATFORMS=cpu','--entrypoint','/opt/cu-numerics/bin/python',image,'-c',code],check=True)
+          subprocess.run(['docker','run','--rm','-e','JAX_PLATFORMS=cpu','-e','LD_LIBRARY_PATH=/opt/cu-numerics/lib:/usr/local/cuda/lib64','--entrypoint','/opt/cu-numerics/bin/python',image,'-c',code],check=True)
           PYTHON
+          docker image inspect ghcr.io/kunori-kiku/cu-numerics:cuda12.9 --format '{{.Id}} {{.Size}}'
       - name: Publish verified image
         env:
           REGISTRY_TOKEN: ${{ secrets.GITHUB_TOKEN }}
